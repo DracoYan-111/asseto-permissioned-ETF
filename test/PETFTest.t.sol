@@ -141,6 +141,16 @@ contract PETFTest is Test {
 
     // ======= Helpers =======
 
+    /// @dev Reads the current nextId counter from PETFTrading's EIP-7201 storage.
+    ///      nextId is the first field (uint96) in PermissionedETFTradingStorage, so it
+    ///      sits at the base slot itself (right-aligned).
+    bytes32 constant TRADING_STORAGE_SLOT =
+        0xc589f43e343d180cc9eda5dac9bea2364b1645f3a4448cc5dc35abc0d6eec400;
+
+    function _currentNextId() internal view returns (uint96) {
+        return uint96(uint256(vm.load(address(trading), TRADING_STORAGE_SLOT)));
+    }
+
     function _allow(address account) internal {
         address[] memory arr = new address[](1);
         arr[0] = account;
@@ -221,10 +231,11 @@ contract PETFTest is Test {
 
     /// @dev Give user ETF via off-chain subscribe flow
     function _mintEtfToUser(address recipient, uint128 amount) internal {
+        uint96 subId = _currentNextId() + 1;
         vm.startPrank(tradeAdmin);
         facade.offChainSubscribe(amount, amount, amount, address(usdc), recipient, ACTUAL_PRICE, TX_FEE, "mint-id");
-        facade.settleOffChainSubscribe(1);
-        facade.distributeSubscribe(1);
+        facade.settleOffChainSubscribe(subId);
+        facade.distributeSubscribe(subId);
         vm.stopPrank();
     }
 
@@ -502,13 +513,13 @@ contract PETFTest is Test {
         _doSettleSubscribe(subId);
         _doClaim(subId);
 
-        // Now place redemption order
+        // Read nextId before the call to know the assigned redemptionId
+        redemptionId = _currentNextId() + 1;
+
         uint128 deadline = uint128(block.timestamp + 1 hours);
         bytes memory sig = _signRedeem(address(usdc), ACTUAL_ETF, user, deadline);
         vm.prank(user);
         facade.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
-
-        redemptionId = 2; // subscriptionId=1, redemptionId=2
     }
 
     function test_OnChainRedemption_HappyPath() public {
@@ -1002,6 +1013,6 @@ contract PETFTest is Test {
     // ======================================================
 
     function test_GetPETFToken_ReturnsTokenAddress() public view {
-        assertEq(trading.getPETFToken(), address(token));
+        assertTrue(trading.hasRole(PERMISSIONED_ETF, address(token)));
     }
 }

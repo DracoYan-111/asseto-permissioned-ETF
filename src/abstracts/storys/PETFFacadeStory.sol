@@ -25,7 +25,9 @@ abstract contract PETFFacadeStory {
         address indexed to,
         uint256 value
     );
-
+    // keccak256(abi.encode(uint256(keccak256("permissionedETF.storage.PETFFacade")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant PETFFacadeStorageLocation =
+        0x1cc621a296b912e0c4f817276810fcd70d33e6192fe935616c28ac0a0175e400;
     /// ======= Storage =======
     /// @custom:storage-location erc7201:permissionedETF.storage.PETFFacade
     struct PETFFacadeStorage {
@@ -41,7 +43,6 @@ abstract contract PETFFacadeStory {
 
     /**
      * @dev Returns the storage of the PETFFacade contract.
-     *      Slot = keccak256("permissionedETF.storage.PETFFacade") & ~bytes32(uint256(0xff))
      */
     function _getFacadeStorage()
         internal
@@ -49,10 +50,8 @@ abstract contract PETFFacadeStory {
         virtual
         returns (PETFFacadeStorage storage $)
     {
-        // Computed at call-time to avoid the assembly restriction on non-literal constants.
-        bytes32 slot = keccak256("permissionedETF.storage.PETFFacade") & ~bytes32(uint256(0xff));
         assembly {
-            $.slot := slot
+            $.slot := PETFFacadeStorageLocation
         }
     }
 }

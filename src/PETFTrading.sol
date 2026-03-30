@@ -549,6 +549,7 @@ contract PETFTrading is
 
         RedemptionData storage rd = $.redemptionDataMap[redemptionId];
 
+       // if (!rd.isSettled) revert RedemptionNotSettled();
         if (rd.user == address(0)) revert RedemptionDoesNotExist();
 
         emit BurnEvent(

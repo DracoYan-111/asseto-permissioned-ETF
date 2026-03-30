@@ -80,6 +80,12 @@ contract DeployPETFToken is Script {
         // 7. Grant PERMISSIONED_ETF on PETFRewardDistributor to PETFFacade
         IAccessControl(petfRDProxy).grantRole(PERMISSIONED_ETF, petfFacadeProxy);
 
+        // 8. Revoke PERMISSIONED_ETF from PETFToken on PETFTrading and PETFRewardDistributor.
+        //    PETFToken was granted this role during initialization but only PETFFacade
+        //    should be able to call trading / reward-distributor functions.
+        IAccessControl(petfTradingProxy).revokeRole(PERMISSIONED_ETF, petfTokenProxy);
+        IAccessControl(petfRDProxy).revokeRole(PERMISSIONED_ETF, petfTokenProxy);
+
         vm.stopBroadcast();
     }
 }

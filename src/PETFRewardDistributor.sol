@@ -150,7 +150,7 @@ contract PETFRewardDistributor is
     function cancelRewardPhase(
         uint256 period,
         address recipient
-    ) external whenNotPaused onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PERMISSIONED_ETF) {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();
@@ -174,7 +174,7 @@ contract PETFRewardDistributor is
     function emergencyWithdraw(
         uint256 period,
         address recipient
-    ) external whenNotPaused onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PERMISSIONED_ETF) {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();

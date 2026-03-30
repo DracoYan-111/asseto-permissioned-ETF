@@ -70,7 +70,6 @@ contract PETFToken is
 
             if (getRestriction(account) != restriction) {
                 _setRestriction(account, restriction);
-                emit UserRestrictionsUpdated(account, restriction);
             }
 
             if (shouldSweepBalance) {
@@ -118,6 +117,8 @@ contract PETFToken is
      *      performing authorization before calling this.
      */
     function mintETF(address to, uint256 amount) external onlyRole(ETF_ADMIN) {
+        _snapshotAccount(to, balanceOf(to));
+        _snapshotTotalSupply(totalSupply());    
         super._update(address(0), to, amount);
     }
 
@@ -125,7 +126,10 @@ contract PETFToken is
      * @dev Burns ETF tokens from `from`. Callable only by PETFFacade (ETF_ADMIN role).
      *      Takes a pre-burn snapshot before executing the burn.
      */
-    function burnETF(address from, uint256 amount) external onlyRole(ETF_ADMIN) {
+    function burnETF(
+        address from,
+        uint256 amount
+    ) external onlyRole(ETF_ADMIN) {
         _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
         super._update(from, address(0), amount);
