@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {PETFToken} from "../src/PETFToken.sol";
 import {PETFTrading} from "../src/PETFTrading.sol";
+import {PETFFacade} from "../src/PETFFacade.sol";
 import {IPETFTrading} from "../src/interfaces/IPETFTrading.sol";
 import {Blacklistable} from "../src/abstracts/Blacklistable.sol";
 import {MockUSDC} from "./MockUSDC.sol";
@@ -15,6 +16,7 @@ contract PETFTest is Test {
     // ======= Contracts =======
     PETFToken token;
     PETFTrading trading;
+    PETFFacade facade;
     MockUSDC usdc;
 
     // ======= Role constants =======
@@ -66,13 +68,14 @@ contract PETFTest is Test {
         // Deploy implementations
         PETFToken tokenImpl = new PETFToken();
         PETFTrading tradingImpl = new PETFTrading();
+        PETFFacade facadeImpl = new PETFFacade();
 
         // Deploy proxies
         token = PETFToken(
             address(
                 new ERC1967Proxy(
                     address(tokenImpl),
-                    abi.encodeCall(PETFToken.initialize, ("Permissioned ETF", "PETF", BOARD_LOT_SIZE))
+                    abi.encodeCall(PETFToken.initialize, ("Permissioned ETF", "PETF"))
                 )
             )
         );
@@ -84,20 +87,37 @@ contract PETFTest is Test {
                 )
             )
         );
+        facade = PETFFacade(
+            address(
+                new ERC1967Proxy(
+                    address(facadeImpl),
+                    abi.encodeCall(PETFFacade.initialize, (
+                        address(token),
+                        address(trading),
+                        address(0), // no RewardDistributor in these tests
+                        assetRecipient,
+                        serviceFeeRecipient,
+                        BOARD_LOT_SIZE
+                    ))
+                )
+            )
+        );
 
-        // Grant roles first (some setup calls below require them)
-        token.grantRole(TRADE_ADMIN, tradeAdmin);
+        // Grant roles on PETFToken
         token.grantRole(ETF_ADMIN, admin);
+        token.grantRole(ETF_ADMIN, address(facade)); // facade needs this to call mintETF/burnETF
         token.grantRole(SNAPSHOT_ADMIN, admin);
 
-        // Wire up contracts
-        token.setPetfTrading(address(trading));
-        token.setSupportedTokenAddress(IERC20(address(usdc)), true); // requires ETF_ADMIN
-        token.setAssetRecipient(assetRecipient);
-        token.setServiceFeeRecipient(serviceFeeRecipient);
+        // Grant roles on PETFTrading
+        trading.grantRole(PERMISSIONED_ETF, address(facade)); // facade calls trading functions
 
-        // Add authorized signer
-        token.addOnRemoveAuthorizedSigner(signer, true);
+        // Grant roles on PETFFacade
+        facade.grantRole(ETF_ADMIN, admin);       // for facade.pause()
+        facade.grantRole(TRADE_ADMIN, tradeAdmin);
+
+        // Configure facade
+        facade.setSupportedTokenAddress(IERC20(address(usdc)), true);
+        facade.addOnRemoveAuthorizedSigner(signer, true);
 
         // Whitelist users for on-chain subscribe
         _allow(user);
@@ -107,15 +127,16 @@ contract PETFTest is Test {
         usdc.mint(user, 10_000e6);
         usdc.mint(user2, 10_000e6);
 
+        // Users approve facade (not token) for USD transfers
         vm.prank(user);
-        usdc.approve(address(token), type(uint256).max);
+        usdc.approve(address(facade), type(uint256).max);
         vm.prank(user2);
-        usdc.approve(address(token), type(uint256).max);
+        usdc.approve(address(facade), type(uint256).max);
 
         // Give assetRecipient USDC and approval for claimUSD flow
         usdc.mint(assetRecipient, 100_000e6);
         vm.prank(assetRecipient);
-        usdc.approve(address(token), type(uint256).max);
+        usdc.approve(address(facade), type(uint256).max);
     }
 
     // ======= Helpers =======
@@ -151,7 +172,7 @@ contract PETFTest is Test {
         address userAddress,
         uint96 deadline
     ) internal view returns (bytes memory) {
-        uint256 nonce = token.nonceOf(userAddress);
+        uint256 nonce = facade.nonceOf(userAddress);
         bytes32 structHash = keccak256(
             abi.encode(SUBSCRIBE_TYPEHASH, usdAddress, uint256(usdAmount), uint256(orderEtfAmount), userAddress, nonce, uint256(deadline))
         );
@@ -166,7 +187,7 @@ contract PETFTest is Test {
         address userAddress,
         uint128 deadline
     ) internal view returns (bytes memory) {
-        uint256 nonce = token.nonceOf(userAddress);
+        uint256 nonce = facade.nonceOf(userAddress);
         bytes32 structHash = keccak256(
             abi.encode(REDEEM_TYPEHASH, usdAddress, uint256(etfAmount), userAddress, nonce, uint256(deadline))
         );
@@ -180,33 +201,30 @@ contract PETFTest is Test {
         uint96 deadline = uint96(block.timestamp + 1 hours);
         bytes memory sig = _signSubscribe(address(usdc), USD_AMOUNT, ORDER_ETF_AMOUNT, user, deadline);
         vm.prank(user);
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
         return 1;
     }
 
     /// @dev Full settle flow for subscriptionId, returns the settled subscriptionId
     function _doSettleSubscribe(uint96 subscriptionId) internal {
         vm.startPrank(tradeAdmin);
-        token.updateOnChainSubscribe(subscriptionId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "off-id-1");
-        token.settleOnChainSubscribe(subscriptionId);
+        facade.updateOnChainSubscribe(subscriptionId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "off-id-1");
+        facade.settleOnChainSubscribe(subscriptionId);
         vm.stopPrank();
     }
 
     /// @dev Full claim flow — user claims ETF after settlement
     function _doClaim(uint96 subscriptionId) internal {
         vm.prank(user);
-        token.claim(subscriptionId);
+        facade.claim(subscriptionId);
     }
 
     /// @dev Give user ETF via off-chain subscribe flow
     function _mintEtfToUser(address recipient, uint128 amount) internal {
-        address[] memory arr = new address[](1);
-        arr[0] = recipient;
-        // make sure recipient is not blocked (DEFAULT ok for offchain)
         vm.startPrank(tradeAdmin);
-        token.offChainSubscribe(amount, amount, amount, address(usdc), recipient, ACTUAL_PRICE, TX_FEE, "mint-id");
-        token.settleOffChainSubscribe(1);
-        token.distributeSubscribe(1);
+        facade.offChainSubscribe(amount, amount, amount, address(usdc), recipient, ACTUAL_PRICE, TX_FEE, "mint-id");
+        facade.settleOffChainSubscribe(1);
+        facade.distributeSubscribe(1);
         vm.stopPrank();
     }
 
@@ -219,15 +237,15 @@ contract PETFTest is Test {
         bytes memory sig = _signSubscribe(address(usdc), USD_AMOUNT, ORDER_ETF_AMOUNT, user, deadline);
 
         uint256 userUsdBefore = usdc.balanceOf(user);
-        uint256 contractUsdBefore = usdc.balanceOf(address(token));
+        uint256 contractUsdBefore = usdc.balanceOf(address(facade));
 
         vm.prank(user);
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
 
         assertEq(usdc.balanceOf(user), userUsdBefore - USD_AMOUNT, "user USD not debited");
-        assertEq(usdc.balanceOf(address(token)), contractUsdBefore + USD_AMOUNT, "contract USD not credited");
+        assertEq(usdc.balanceOf(address(facade)), contractUsdBefore + USD_AMOUNT, "contract USD not credited");
 
-        IPETFTrading.SubscribeData memory sd = token.getSubscribeData(1);
+        IPETFTrading.SubscribeData memory sd = facade.getSubscribeData(1);
         assertEq(sd.user, user);
         assertEq(sd.usdAmount, USD_AMOUNT);
         assertEq(sd.orderEtfAmount, ORDER_ETF_AMOUNT);
@@ -237,9 +255,9 @@ contract PETFTest is Test {
     }
 
     function test_OnChainSubscribe_NonceIncremented() public {
-        assertEq(token.nonceOf(user), 0);
+        assertEq(facade.nonceOf(user), 0);
         _doSubscribe();
-        assertEq(token.nonceOf(user), 1);
+        assertEq(facade.nonceOf(user), 1);
     }
 
     function test_OnChainSubscribe_RevertExpiredOrder() public {
@@ -248,7 +266,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("ExpiredOrder()"));
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
     }
 
     function test_OnChainSubscribe_RevertInvalidSignature() public {
@@ -260,7 +278,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("InvalidSignature()"));
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), badSig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), badSig);
     }
 
     function test_OnChainSubscribe_RevertNotWhitelisted() public {
@@ -269,7 +287,7 @@ contract PETFTest is Test {
 
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSignature("NotAllowed(address)", stranger));
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
     }
 
     function test_OnChainSubscribe_RevertInvalidLotSize() public {
@@ -279,7 +297,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("InvalidTransferAmount(uint256)", badAmount));
-        token.onChainSubscribe(USD_AMOUNT, badAmount, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, badAmount, deadline, address(usdc), sig);
     }
 
     function test_OnChainSubscribe_RevertUnsupportedToken() public {
@@ -289,7 +307,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("UnsupportedTokenAddress(address)", fakeToken));
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, fakeToken, sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, fakeToken, sig);
     }
 
     // ======================================================
@@ -300,9 +318,9 @@ contract PETFTest is Test {
         uint96 subId = _doSubscribe();
 
         vm.prank(tradeAdmin);
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "off-1");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "off-1");
 
-        IPETFTrading.SubscribeData memory sd = token.getSubscribeData(subId);
+        IPETFTrading.SubscribeData memory sd = facade.getSubscribeData(subId);
         assertEq(sd.actualPrice, ACTUAL_PRICE);
         assertEq(sd.actualEtfAmount, ACTUAL_ETF);
         assertEq(sd.actualUSDAmount, ACTUAL_USD);
@@ -316,7 +334,7 @@ contract PETFTest is Test {
         uint128 overUSD = USD_AMOUNT + 1;
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("InvalidTransferAmount(uint256)", uint256(overUSD)));
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, overUSD, 0, 0, "x");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, overUSD, 0, 0, "x");
     }
 
     function test_UpdateOnChainSubscribe_RevertZeroUSDAmount() public {
@@ -324,7 +342,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("InvalidTransferAmount(uint256)", uint256(0)));
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, 0, 0, 0, "x");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, 0, 0, 0, "x");
     }
 
     function test_UpdateOnChainSubscribe_RevertNotTradeAdmin() public {
@@ -332,7 +350,7 @@ contract PETFTest is Test {
 
         vm.prank(stranger);
         vm.expectRevert();
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "x");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "x");
     }
 
     function test_UpdateOnChainSubscribe_RevertAlreadySettled() public {
@@ -341,7 +359,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("SubscriptionAlreadySettled()"));
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "x");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, ACTUAL_USD, REFUND_USD, TX_FEE, "x");
     }
 
     // ======================================================
@@ -357,18 +375,18 @@ contract PETFTest is Test {
         // actualUSD + refund + fee = 1000e6 = USD_AMOUNT
 
         vm.prank(tradeAdmin);
-        token.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, actualUSD, refund, fee, "off-1");
+        facade.updateOnChainSubscribe(subId, ACTUAL_PRICE, ACTUAL_ETF, actualUSD, refund, fee, "off-1");
 
         uint256 assetBefore = usdc.balanceOf(assetRecipient);
         uint256 feeBefore = usdc.balanceOf(serviceFeeRecipient);
 
         vm.prank(tradeAdmin);
-        token.settleOnChainSubscribe(subId);
+        facade.settleOnChainSubscribe(subId);
 
         assertEq(usdc.balanceOf(assetRecipient), assetBefore + actualUSD, "assetRecipient not credited");
         assertEq(usdc.balanceOf(serviceFeeRecipient), feeBefore + fee, "serviceFeeRecipient not credited");
 
-        IPETFTrading.SubscribeData memory sd = token.getSubscribeData(subId);
+        IPETFTrading.SubscribeData memory sd = facade.getSubscribeData(subId);
         assertTrue(sd.isSettled);
     }
 
@@ -378,7 +396,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("SubscriptionAlreadySettled()"));
-        token.settleOnChainSubscribe(subId);
+        facade.settleOnChainSubscribe(subId);
     }
 
     // ======================================================
@@ -393,7 +411,7 @@ contract PETFTest is Test {
         uint256 usdBefore = usdc.balanceOf(user);
 
         vm.prank(user);
-        token.claim(subId);
+        facade.claim(subId);
 
         assertEq(token.balanceOf(user), etfBefore + ACTUAL_ETF, "ETF not minted");
         assertEq(usdc.balanceOf(user), usdBefore + REFUND_USD, "USD not refunded");
@@ -404,10 +422,10 @@ contract PETFTest is Test {
         _doSettleSubscribe(subId);
 
         vm.prank(user);
-        token.claim(subId);
+        facade.claim(subId);
 
         vm.expectRevert(abi.encodeWithSignature("SubscriptionDoesNotExist()"));
-        token.getSubscribeData(subId);
+        facade.getSubscribeData(subId);
     }
 
     function test_Claim_RevertNotOwner() public {
@@ -416,7 +434,7 @@ contract PETFTest is Test {
 
         vm.prank(user2);
         vm.expectRevert(abi.encodeWithSignature("OnlyTheRedeemerCanClaim()"));
-        token.claim(subId);
+        facade.claim(subId);
     }
 
     function test_Claim_RevertNotSettled() public {
@@ -424,7 +442,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("SubscriptionNotSettled()"));
-        token.claim(subId);
+        facade.claim(subId);
     }
 
     function test_Claim_RevertBlacklisted() public {
@@ -435,7 +453,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("Blacklisted(address)", user));
-        token.claim(subId);
+        facade.claim(subId);
     }
 
     // ======================================================
@@ -446,23 +464,23 @@ contract PETFTest is Test {
         uint96 subId = _doSubscribe();
 
         uint256 userUsdBefore = usdc.balanceOf(user);
-        uint256 contractUsdBefore = usdc.balanceOf(address(token));
+        uint256 contractUsdBefore = usdc.balanceOf(address(facade));
 
         vm.prank(tradeAdmin);
-        token.revertOnChainSubscribe(subId);
+        facade.revertOnChainSubscribe(subId);
 
         assertEq(usdc.balanceOf(user), userUsdBefore + USD_AMOUNT, "user not refunded");
-        assertEq(usdc.balanceOf(address(token)), contractUsdBefore - USD_AMOUNT, "contract not debited");
+        assertEq(usdc.balanceOf(address(facade)), contractUsdBefore - USD_AMOUNT, "contract not debited");
     }
 
     function test_RevertOnChainSubscribe_DeletesRecord() public {
         uint96 subId = _doSubscribe();
 
         vm.prank(tradeAdmin);
-        token.revertOnChainSubscribe(subId);
+        facade.revertOnChainSubscribe(subId);
 
         vm.expectRevert(abi.encodeWithSignature("SubscriptionDoesNotExist()"));
-        token.getSubscribeData(subId);
+        facade.getSubscribeData(subId);
     }
 
     function test_RevertOnChainSubscribe_RevertAfterSettled() public {
@@ -471,7 +489,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("SubscriptionAlreadySettled()"));
-        token.revertOnChainSubscribe(subId);
+        facade.revertOnChainSubscribe(subId);
     }
 
     // ======================================================
@@ -488,7 +506,7 @@ contract PETFTest is Test {
         uint128 deadline = uint128(block.timestamp + 1 hours);
         bytes memory sig = _signRedeem(address(usdc), ACTUAL_ETF, user, deadline);
         vm.prank(user);
-        token.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
+        facade.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
 
         redemptionId = 2; // subscriptionId=1, redemptionId=2
     }
@@ -496,7 +514,7 @@ contract PETFTest is Test {
     function test_OnChainRedemption_HappyPath() public {
         uint96 redemptionId = _doRedemption();
 
-        IPETFTrading.RedemptionData memory rd = token.getRedemptionData(redemptionId);
+        IPETFTrading.RedemptionData memory rd = facade.getRedemptionData(redemptionId);
         assertEq(rd.user, user);
         assertEq(rd.actualEtfAmount, ACTUAL_ETF);
         assertEq(rd.usdAddress, address(usdc));
@@ -515,7 +533,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("ExpiredOrder()"));
-        token.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
+        facade.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
     }
 
     function test_OnChainRedemption_RevertBlacklisted() public {
@@ -530,7 +548,7 @@ contract PETFTest is Test {
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("Blacklisted(address)", user));
-        token.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
+        facade.onChainRedemption(address(usdc), ACTUAL_ETF, deadline, sig);
     }
 
     // ======================================================
@@ -541,18 +559,18 @@ contract PETFTest is Test {
         uint96 redemptionId = _doRedemption();
 
         vm.prank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
 
         uint256 etfBefore = token.balanceOf(user);
         uint256 supplyBefore = token.totalSupply();
 
         vm.prank(tradeAdmin);
-        token.settleOnChainRedemption(redemptionId);
+        facade.settleOnChainRedemption(redemptionId);
 
         assertEq(token.balanceOf(user), etfBefore - ACTUAL_ETF, "ETF not burned");
         assertEq(token.totalSupply(), supplyBefore - ACTUAL_ETF, "total supply not reduced");
 
-        IPETFTrading.RedemptionData memory rd = token.getRedemptionData(redemptionId);
+        IPETFTrading.RedemptionData memory rd = facade.getRedemptionData(redemptionId);
         assertTrue(rd.isSettled);
     }
 
@@ -560,10 +578,10 @@ contract PETFTest is Test {
         uint96 redemptionId = _doRedemption();
 
         vm.startPrank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
-        token.settleOnChainRedemption(redemptionId);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.settleOnChainRedemption(redemptionId);
         vm.expectRevert(abi.encodeWithSignature("RedemptionAlreadySettled()"));
-        token.settleOnChainRedemption(redemptionId);
+        facade.settleOnChainRedemption(redemptionId);
         vm.stopPrank();
     }
 
@@ -575,15 +593,15 @@ contract PETFTest is Test {
         uint96 redemptionId = _doRedemption();
 
         vm.startPrank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
-        token.settleOnChainRedemption(redemptionId);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.settleOnChainRedemption(redemptionId);
         vm.stopPrank();
 
         uint256 userUsdBefore = usdc.balanceOf(user);
         uint256 assetBefore = usdc.balanceOf(assetRecipient);
 
         vm.prank(user);
-        token.claimUSD(redemptionId);
+        facade.claimUSD(redemptionId);
 
         assertEq(usdc.balanceOf(user), userUsdBefore + ACTUAL_USD, "user USD not credited");
         assertEq(usdc.balanceOf(assetRecipient), assetBefore - ACTUAL_USD, "assetRecipient not debited");
@@ -593,39 +611,39 @@ contract PETFTest is Test {
         uint96 redemptionId = _doRedemption();
 
         vm.startPrank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
-        token.settleOnChainRedemption(redemptionId);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.settleOnChainRedemption(redemptionId);
         vm.stopPrank();
 
         vm.prank(user);
-        token.claimUSD(redemptionId);
+        facade.claimUSD(redemptionId);
 
         vm.expectRevert(abi.encodeWithSignature("RedemptionDoesNotExist()"));
-        token.getRedemptionData(redemptionId);
+        facade.getRedemptionData(redemptionId);
     }
 
     function test_ClaimUSD_RevertNotOwner() public {
         uint96 redemptionId = _doRedemption();
 
         vm.startPrank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
-        token.settleOnChainRedemption(redemptionId);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.settleOnChainRedemption(redemptionId);
         vm.stopPrank();
 
         vm.prank(user2);
         vm.expectRevert(abi.encodeWithSignature("OnlyTheRedeemerCanClaim()"));
-        token.claimUSD(redemptionId);
+        facade.claimUSD(redemptionId);
     }
 
     function test_ClaimUSD_RevertNotSettled() public {
         uint96 redemptionId = _doRedemption();
 
         vm.prank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("RedemptionNotSettled()"));
-        token.claimUSD(redemptionId);
+        facade.claimUSD(redemptionId);
     }
 
     // ======================================================
@@ -636,20 +654,20 @@ contract PETFTest is Test {
         uint96 redemptionId = _doRedemption();
 
         vm.prank(tradeAdmin);
-        token.revertOnChainRedemption(redemptionId);
+        facade.revertOnChainRedemption(redemptionId);
 
         vm.expectRevert(abi.encodeWithSignature("RedemptionDoesNotExist()"));
-        token.getRedemptionData(redemptionId);
+        facade.getRedemptionData(redemptionId);
     }
 
     function test_RevertOnChainRedemption_RevertAfterSettled() public {
         uint96 redemptionId = _doRedemption();
 
         vm.startPrank(tradeAdmin);
-        token.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
-        token.settleOnChainRedemption(redemptionId);
+        facade.updateOnChainRedemption(redemptionId, ACTUAL_USD, ACTUAL_PRICE, TX_FEE);
+        facade.settleOnChainRedemption(redemptionId);
         vm.expectRevert(abi.encodeWithSignature("RedemptionAlreadySettled()"));
-        token.revertOnChainRedemption(redemptionId);
+        facade.revertOnChainRedemption(redemptionId);
         vm.stopPrank();
     }
 
@@ -659,9 +677,9 @@ contract PETFTest is Test {
 
     function test_OffChainSubscribe_CreatesRecord() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
-        IPETFTrading.SubscribeData memory sd = token.getSubscribeData(1);
+        IPETFTrading.SubscribeData memory sd = facade.getSubscribeData(1);
         assertEq(sd.user, user);
         assertEq(sd.usdAmount, USD_AMOUNT);
         assertEq(sd.actualEtfAmount, ACTUAL_ETF);
@@ -671,62 +689,62 @@ contract PETFTest is Test {
 
     function test_SettleOffChainSubscribe_MarksSettled() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
         vm.prank(tradeAdmin);
-        token.settleOffChainSubscribe(1);
+        facade.settleOffChainSubscribe(1);
 
-        IPETFTrading.SubscribeData memory sd = token.getSubscribeData(1);
+        IPETFTrading.SubscribeData memory sd = facade.getSubscribeData(1);
         assertTrue(sd.isSettled);
     }
 
     function test_DistributeSubscribe_MintsETF() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
         vm.prank(tradeAdmin);
-        token.settleOffChainSubscribe(1);
+        facade.settleOffChainSubscribe(1);
 
         uint256 etfBefore = token.balanceOf(user);
 
         vm.prank(tradeAdmin);
-        token.distributeSubscribe(1);
+        facade.distributeSubscribe(1);
 
         assertEq(token.balanceOf(user), etfBefore + ACTUAL_ETF, "ETF not minted");
     }
 
     function test_DistributeSubscribe_DeletesRecord() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
         vm.prank(tradeAdmin);
-        token.settleOffChainSubscribe(1);
+        facade.settleOffChainSubscribe(1);
 
         vm.prank(tradeAdmin);
-        token.distributeSubscribe(1);
+        facade.distributeSubscribe(1);
 
         vm.expectRevert(abi.encodeWithSignature("SubscriptionDoesNotExist()"));
-        token.getSubscribeData(1);
+        facade.getSubscribeData(1);
     }
 
     function test_DistributeSubscribe_RevertNotSettled() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("SubscriptionNotSettled()"));
-        token.distributeSubscribe(1);
+        facade.distributeSubscribe(1);
     }
 
     function test_RevertOffChainSubscribe_DeletesRecord() public {
         vm.prank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
 
         vm.prank(tradeAdmin);
-        token.revertOffChainSubscribe(1);
+        facade.revertOffChainSubscribe(1);
 
         vm.expectRevert(abi.encodeWithSignature("SubscriptionDoesNotExist()"));
-        token.getSubscribeData(1);
+        facade.getSubscribeData(1);
     }
 
     function test_OffChainSubscribe_RevertBlockedUser() public {
@@ -734,7 +752,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("Blacklisted(address)", user));
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
     }
 
     // ======================================================
@@ -743,9 +761,9 @@ contract PETFTest is Test {
 
     function test_OffChainRedemption_CreatesRecord() public {
         vm.prank(tradeAdmin);
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
 
-        IPETFTrading.RedemptionData memory rd = token.getRedemptionData(1);
+        IPETFTrading.RedemptionData memory rd = facade.getRedemptionData(1);
         assertEq(rd.user, user);
         assertEq(rd.actualUSDAmount, ACTUAL_USD);
         assertEq(rd.actualEtfAmount, ACTUAL_ETF);
@@ -755,24 +773,24 @@ contract PETFTest is Test {
 
     function test_SettleOffChainRedemption_MarksSettled() public {
         vm.prank(tradeAdmin);
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
 
         vm.prank(tradeAdmin);
-        token.settleOffChainRedemption(1);
+        facade.settleOffChainRedemption(1);
 
-        IPETFTrading.RedemptionData memory rd = token.getRedemptionData(1);
+        IPETFTrading.RedemptionData memory rd = facade.getRedemptionData(1);
         assertTrue(rd.isSettled);
     }
 
     function test_RevertOffChainRedemption_DeletesRecord() public {
         vm.prank(tradeAdmin);
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
 
         vm.prank(tradeAdmin);
-        token.revertOffChainRedemption(1);
+        facade.revertOffChainRedemption(1);
 
         vm.expectRevert(abi.encodeWithSignature("RedemptionDoesNotExist()"));
-        token.getRedemptionData(1);
+        facade.getRedemptionData(1);
     }
 
     function test_OffChainRedemption_RevertBlockedUser() public {
@@ -780,7 +798,7 @@ contract PETFTest is Test {
 
         vm.prank(tradeAdmin);
         vm.expectRevert(abi.encodeWithSignature("Blacklisted(address)", user));
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
     }
 
     // ======================================================
@@ -790,38 +808,38 @@ contract PETFTest is Test {
     function test_BurnAdmin_BurnsETFAndDeletesRecord() public {
         // Give user ETF via offchain subscribe
         vm.startPrank(tradeAdmin);
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
-        token.settleOffChainSubscribe(1);
-        token.distributeSubscribe(1);
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "oc-1");
+        facade.settleOffChainSubscribe(1);
+        facade.distributeSubscribe(1);
         vm.stopPrank();
 
         assertEq(token.balanceOf(user), ACTUAL_ETF);
 
         // Create a redemption order
         vm.prank(tradeAdmin);
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
         uint96 redemptionId = 2;
 
         uint256 etfBefore = token.balanceOf(user);
         uint256 supplyBefore = token.totalSupply();
 
         vm.prank(tradeAdmin);
-        token.burnAdmin(redemptionId);
+        facade.burnAdmin(redemptionId);
 
         assertEq(token.balanceOf(user), etfBefore - ACTUAL_ETF, "ETF not burned");
         assertEq(token.totalSupply(), supplyBefore - ACTUAL_ETF, "total supply not reduced");
 
         vm.expectRevert(abi.encodeWithSignature("RedemptionDoesNotExist()"));
-        token.getRedemptionData(redemptionId);
+        facade.getRedemptionData(redemptionId);
     }
 
     function test_BurnAdmin_RevertNotTradeAdmin() public {
         vm.prank(tradeAdmin);
-        token.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
+        facade.offChainRedemption(ACTUAL_USD, address(usdc), ACTUAL_ETF, user, ACTUAL_PRICE, TX_FEE, "or-1");
 
         vm.prank(stranger);
         vm.expectRevert();
-        token.burnAdmin(1);
+        facade.burnAdmin(1);
     }
 
     // ======================================================
@@ -831,25 +849,25 @@ contract PETFTest is Test {
     function test_AccessControl_OffChainSubscribeRequiresTradeAdmin() public {
         vm.prank(stranger);
         vm.expectRevert();
-        token.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "x");
+        facade.offChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, ACTUAL_ETF, address(usdc), user, ACTUAL_PRICE, TX_FEE, "x");
     }
 
     function test_AccessControl_SetBoardLotSizeRequiresAdmin() public {
         vm.prank(stranger);
         vm.expectRevert();
-        token.setBoardLotSize(200e18);
+        facade.setBoardLotSize(200e18);
     }
 
     function test_AccessControl_PauseRequiresEtfAdmin() public {
         vm.prank(stranger);
         vm.expectRevert();
-        token.pause();
+        facade.pause();
     }
 
     function test_AccessControl_AddSignerRequiresAdmin() public {
         vm.prank(stranger);
         vm.expectRevert();
-        token.addOnRemoveAuthorizedSigner(stranger, true);
+        facade.addOnRemoveAuthorizedSigner(stranger, true);
     }
 
     // ======================================================
@@ -857,17 +875,17 @@ contract PETFTest is Test {
     // ======================================================
 
     function test_BoardLotSize_SetAndGet() public {
-        token.setBoardLotSize(200e18);
-        assertEq(token.getBoardLotSize(), 200e18);
+        facade.setBoardLotSize(200e18);
+        assertEq(facade.getBoardLotSize(), 200e18);
     }
 
     function test_BoardLotSize_DisableCheck() public {
-        token.setHasMinAmount(false);
+        facade.setHasMinAmount(false);
         // Should not revert with non-multiple amount
         uint96 deadline = uint96(block.timestamp + 1 hours);
         bytes memory sig = _signSubscribe(address(usdc), USD_AMOUNT, 150e18, user, deadline);
         vm.prank(user);
-        token.onChainSubscribe(USD_AMOUNT, 150e18, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, 150e18, deadline, address(usdc), sig);
     }
 
     // ======================================================
@@ -875,36 +893,36 @@ contract PETFTest is Test {
     // ======================================================
 
     function test_Pause_BlocksOnChainSubscribe() public {
-        token.pause();
+        facade.pause();
 
         uint96 deadline = uint96(block.timestamp + 1 hours);
         bytes memory sig = _signSubscribe(address(usdc), USD_AMOUNT, ORDER_ETF_AMOUNT, user, deadline);
 
         vm.prank(user);
         vm.expectRevert();
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
     }
 
     function test_Pause_BlocksClaim() public {
         uint96 subId = _doSubscribe();
         _doSettleSubscribe(subId);
 
-        token.pause();
+        facade.pause();
 
         vm.prank(user);
         vm.expectRevert();
-        token.claim(subId);
+        facade.claim(subId);
     }
 
     function test_Unpause_ResumesOperations() public {
-        token.pause();
-        token.unpause();
+        facade.pause();
+        facade.unpause();
 
         uint96 subId = _doSubscribe();
         _doSettleSubscribe(subId);
 
         vm.prank(user);
-        token.claim(subId);
+        facade.claim(subId);
         assertEq(token.balanceOf(user), ACTUAL_ETF);
     }
 
@@ -922,7 +940,7 @@ contract PETFTest is Test {
         assertEq(token.balanceOfAt(user, snapId), 0);
 
         vm.prank(user);
-        token.claim(subId);
+        facade.claim(subId);
 
         // balance now updated
         assertEq(token.balanceOf(user), ACTUAL_ETF);
@@ -959,24 +977,24 @@ contract PETFTest is Test {
 
     function test_AddRemoveAuthorizedSigner() public {
         address newSigner = makeAddr("newSigner");
-        assertFalse(token.getAuthorizedSigner(newSigner));
+        assertFalse(facade.getAuthorizedSigner(newSigner));
 
-        token.addOnRemoveAuthorizedSigner(newSigner, true);
-        assertTrue(token.getAuthorizedSigner(newSigner));
+        facade.addOnRemoveAuthorizedSigner(newSigner, true);
+        assertTrue(facade.getAuthorizedSigner(newSigner));
 
-        token.addOnRemoveAuthorizedSigner(newSigner, false);
-        assertFalse(token.getAuthorizedSigner(newSigner));
+        facade.addOnRemoveAuthorizedSigner(newSigner, false);
+        assertFalse(facade.getAuthorizedSigner(newSigner));
     }
 
     function test_RemovedSigner_InvalidatesSignatures() public {
-        token.addOnRemoveAuthorizedSigner(signer, false);
+        facade.addOnRemoveAuthorizedSigner(signer, false);
 
         uint96 deadline = uint96(block.timestamp + 1 hours);
         bytes memory sig = _signSubscribe(address(usdc), USD_AMOUNT, ORDER_ETF_AMOUNT, user, deadline);
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("InvalidSignature()"));
-        token.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
+        facade.onChainSubscribe(USD_AMOUNT, ORDER_ETF_AMOUNT, deadline, address(usdc), sig);
     }
 
     // ======================================================
