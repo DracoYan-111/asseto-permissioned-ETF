@@ -2,9 +2,8 @@
 // Compatible with OpenZeppelin Contracts ^5.6.0
 pragma solidity ^0.8.27;
 
+import {ERC20PausableUpgradeable, ERC20Upgradeable, Initializable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
 import {AccessControlEnumerableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
-import {ERC20PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PausableUpgradeable.sol";
-import {ERC20Upgradeable, Initializable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 import {PETFTokenStory} from "./abstracts/storys/PETFTokenStory.sol";
@@ -18,7 +17,6 @@ import {Roles} from "./abstracts/Roles.sol";
 ///         business operations live in PETFFacade.
 contract PETFToken is
     Initializable,
-    ERC20Upgradeable,
     ERC20PausableUpgradeable,
     AccessControlEnumerableUpgradeable,
     UUPSUpgradeable,
@@ -103,7 +101,7 @@ contract PETFToken is
         if (from != address(0)) _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
 
-        super._update(from, to, amount);
+        ERC20Upgradeable._update(from, to, amount);
 
         _snapshot();
         if (to != address(0)) _snapshotAccount(to, balanceOf(to));
@@ -118,8 +116,8 @@ contract PETFToken is
      */
     function mintETF(address to, uint256 amount) external onlyRole(ETF_ADMIN) {
         _snapshotAccount(to, balanceOf(to));
-        _snapshotTotalSupply(totalSupply());    
-        super._update(address(0), to, amount);
+        _snapshotTotalSupply(totalSupply());
+        ERC20Upgradeable._update(address(0), to, amount);
     }
 
     /**
@@ -132,7 +130,7 @@ contract PETFToken is
     ) external onlyRole(ETF_ADMIN) {
         _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
-        super._update(from, address(0), amount);
+        ERC20Upgradeable._update(from, address(0), amount);
     }
 
     /**
@@ -163,7 +161,7 @@ contract PETFToken is
         address from,
         address to,
         uint256 value
-    ) internal override(ERC20Upgradeable, ERC20PausableUpgradeable) {
+    ) internal override(ERC20PausableUpgradeable) {
         _enforcePermissionedTransferPolicy(from, to);
 
         if (to != address(0)) _snapshotAccount(to, balanceOf(to));
