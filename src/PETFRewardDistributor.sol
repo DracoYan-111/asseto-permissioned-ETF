@@ -6,15 +6,13 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {PausableUpgradeable, Initializable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {AccessControlEnumerableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import {AccessControlEnumerableUpgradeable,Initializable} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 
 import {PETFRDStory} from "./abstracts/storys/PETFRDStory.sol";
 
 contract PETFRewardDistributor is
     Initializable,
     AccessControlEnumerableUpgradeable,
-    PausableUpgradeable,
     UUPSUpgradeable,
     PETFRDStory
 {
@@ -28,40 +26,15 @@ contract PETFRewardDistributor is
         _disableInitializers();
     }
 
-    function initialize(address etfToken) public initializer {
+    function initialize() public initializer {
         __AccessControl_init();
-        __Pausable_init();
 
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _grantRole(PERMISSIONED_ETF, etfToken);
-
-        _getPETFRDStorage().ETFToken = etfToken;
     }
 
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    /*//////////////////////////////////////////////////////////////
-                            Pause / Unpause
-    //////////////////////////////////////////////////////////////*/
-
-    function pause() external onlyRole(PERMISSIONED_ETF) {
-        _pause();
-    }
-
-    function unpause() external onlyRole(PERMISSIONED_ETF) {
-        _unpause();
-    }
-
-    function getRewardPauseStatus()
-        external
-        view
-        onlyRole(PERMISSIONED_ETF)
-        returns (bool)
-    {
-        return paused();
-    }
 
     /*//////////////////////////////////////////////////////////////
                                 Views
@@ -70,7 +43,7 @@ contract PETFRewardDistributor is
     function rewardPhaseCount()
         external
         view
-        onlyRole(PERMISSIONED_ETF)
+        onlyRole(PETF_FACADE)
         returns (uint256)
     {
         return _getPETFRDStorage().rewardPhases.length;
@@ -79,14 +52,19 @@ contract PETFRewardDistributor is
     function isClaimed(
         uint256 period,
         uint256 index
-    ) public view onlyRole(PERMISSIONED_ETF) returns (bool) {
+    ) public view onlyRole(PETF_FACADE) returns (bool) {
         return _getPETFRDStorage().claimed[period].get(index);
     }
 
     function getUnclaimedStatus(
         uint256 period,
         uint256 index
-    ) external view onlyRole(PERMISSIONED_ETF) returns (bool claimed, bytes32 merkleRoot) {
+    )
+        external
+        view
+        onlyRole(PETF_FACADE)
+        returns (bool claimed, bytes32 merkleRoot)
+    {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();
@@ -99,7 +77,7 @@ contract PETFRewardDistributor is
     )
         external
         view
-        onlyRole(PERMISSIONED_ETF)
+        onlyRole(PETF_FACADE)
         returns (
             bytes32 merkleRoot,
             uint256 totalAmount,
@@ -129,14 +107,20 @@ contract PETFRewardDistributor is
         uint256 totalAmount,
         IERC20 rewardToken,
         address rewardSender
-    ) external whenNotPaused onlyRole(PERMISSIONED_ETF) {
-        _createRewardPhase(id, merkleRoot, totalAmount, rewardToken, rewardSender);
+    ) external onlyRole(PETF_FACADE) {
+        _createRewardPhase(
+            id,
+            merkleRoot,
+            totalAmount,
+            rewardToken,
+            rewardSender
+        );
     }
 
     function updateMerkleRoot(
         uint256 period,
         bytes32 merkleRoot
-    ) external whenNotPaused onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();
@@ -150,7 +134,7 @@ contract PETFRewardDistributor is
     function cancelRewardPhase(
         uint256 period,
         address recipient
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();
@@ -174,7 +158,7 @@ contract PETFRewardDistributor is
     function emergencyWithdraw(
         uint256 period,
         address recipient
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PETFRDStorage storage $ = _getPETFRDStorage();
 
         if (period >= $.rewardPhases.length) revert InvalidPeriod();
@@ -182,13 +166,19 @@ contract PETFRewardDistributor is
 
         RewardPhase storage phase = $.rewardPhases[period];
 
-        uint256 remainingAmount = uint256(phase.totalAmount) - phase.claimedAmount;
+        uint256 remainingAmount = uint256(phase.totalAmount) -
+            phase.claimedAmount;
         if (remainingAmount == 0) revert NoRewardsToWithdraw();
 
         phase.totalAmount = uint96(phase.claimedAmount);
         phase.rewardToken.safeTransfer(recipient, remainingAmount);
 
-        emit EmergencyWithdrawal(period, remainingAmount, phase.rewardToken, recipient);
+        emit EmergencyWithdrawal(
+            period,
+            remainingAmount,
+            phase.rewardToken,
+            recipient
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -201,7 +191,7 @@ contract PETFRewardDistributor is
         uint256 index,
         bytes32[] calldata merkleProof,
         address sender
-    ) external whenNotPaused onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         _claim(sender, period, amount, index, merkleProof);
     }
 
@@ -231,10 +221,20 @@ contract PETFRewardDistributor is
         );
         uint256 period = $.rewardPhases.length - 1;
         if (totalAmount > 0) {
-            rewardToken.safeTransferFrom(rewardSender, address(this), totalAmount);
+            rewardToken.safeTransferFrom(
+                rewardSender,
+                address(this),
+                totalAmount
+            );
             emit RewardPhaseFunded(period, totalAmount, rewardToken);
         }
-        emit RewardPhaseCreated(id, period, merkleRoot, totalAmount, rewardToken);
+        emit RewardPhaseCreated(
+            id,
+            period,
+            merkleRoot,
+            totalAmount,
+            rewardToken
+        );
     }
 
     function _claim(
@@ -256,7 +256,8 @@ contract PETFRewardDistributor is
         if ($.claimed[period].get(index)) revert AlreadyClaimed();
 
         bytes32 leaf = keccak256(abi.encodePacked(index, account, amount));
-        if (!MerkleProof.verify(merkleProof, merkleRoot, leaf)) revert InvalidProof();
+        if (!MerkleProof.verify(merkleProof, merkleRoot, leaf))
+            revert InvalidProof();
 
         if (phase.claimedAmount + amount > uint256(phase.totalAmount))
             revert InsufficientRewards();

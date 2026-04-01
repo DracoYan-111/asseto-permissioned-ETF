@@ -44,7 +44,7 @@ contract PETFToken is
 
     function createNewSnapshot()
         public
-        onlyRole(SNAPSHOT_ADMIN)
+        onlyRole(DIVIDEND_ADMIN)
         returns (uint256)
     {
         return _snapshot();
@@ -58,7 +58,7 @@ contract PETFToken is
     function setBatchRestriction(
         address[] calldata accounts,
         Restriction restriction
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         uint256 len = accounts.length;
         bool shouldSweepBalance = restriction != Restriction.ALLOWED;
         address receiver = _msgSender();
@@ -81,11 +81,11 @@ contract PETFToken is
         }
     }
 
-    function pause() public onlyRole(ETF_ADMIN) {
+    function pause() public onlyRole(CONTRACT_ADMIN) {
         _pause();
     }
 
-    function unpause() public onlyRole(ETF_ADMIN) {
+    function unpause() public onlyRole(CONTRACT_ADMIN) {
         _unpause();
     }
 
@@ -96,7 +96,7 @@ contract PETFToken is
         address from,
         address to,
         uint256 amount
-    ) public onlyRole(ETF_ADMIN) {
+    ) public onlyRole(FIX_ADMIN) {
         if (to != address(0)) _snapshotAccount(to, balanceOf(to));
         if (from != address(0)) _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
@@ -110,24 +110,25 @@ contract PETFToken is
     }
 
     /**
-     * @dev Mints ETF tokens to `to`. Callable only by PETFFacade (ETF_ADMIN role).
+     * @dev Mints ETF tokens to `to`. Callable only by PETFFacade (TRADE_ADMIN role).
      *      Bypasses the transfer-policy check — the facade is responsible for
      *      performing authorization before calling this.
      */
-    function mintETF(address to, uint256 amount) external onlyRole(ETF_ADMIN) {
-        _snapshotAccount(to, balanceOf(to));
-        _snapshotTotalSupply(totalSupply());
-        ERC20Upgradeable._update(address(0), to, amount);
+    function mintETF(
+        address to,
+        uint256 amount
+    ) external onlyRole(TRADE_ADMIN) {
+        _update(address(0), to, amount);
     }
 
     /**
-     * @dev Burns ETF tokens from `from`. Callable only by PETFFacade (ETF_ADMIN role).
+     * @dev Burns ETF tokens from `from`. Callable only by PETFFacade (TRADE_ADMIN role).
      *      Takes a pre-burn snapshot before executing the burn.
      */
     function burnETF(
         address from,
         uint256 amount
-    ) external onlyRole(ETF_ADMIN) {
+    ) external onlyRole(TRADE_ADMIN) {
         _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
         ERC20Upgradeable._update(from, address(0), amount);
@@ -168,6 +169,10 @@ contract PETFToken is
         _snapshotTotalSupply(totalSupply());
 
         super._update(from, to, value);
+    }
+
+    function decimals() public view override returns (uint8) {
+        return 6;
     }
 
     /**

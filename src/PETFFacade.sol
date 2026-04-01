@@ -10,7 +10,7 @@ import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {PETFFacadeStory} from "./abstracts/storys/PETFFacadeStory.sol";
 import {IPETFTrading} from "./interfaces/IPETFTrading.sol";
 import {IPETFRD} from "./interfaces/IPETFRD.sol";
-import {IPermissionedETF} from "./interfaces/PETFToken.sol";
+import {IPermissionedETF} from "./interfaces/IPETFToken.sol";
 import {Roles} from "./abstracts/Roles.sol";
 
 /// @title PETFFacade
@@ -73,7 +73,7 @@ contract PETFFacade is
 
     function setBoardLotSize(
         uint96 boardLotSize
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         _getFacadeStorage().boardLotSize = boardLotSize;
     }
 
@@ -83,7 +83,7 @@ contract PETFFacade is
 
     function setHasMinAmount(
         bool hasMinAmount
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         _getFacadeStorage().hasMinAmount = hasMinAmount;
     }
 
@@ -99,34 +99,36 @@ contract PETFFacade is
 
     function setRewardDistributor(
         address petfRewardDistributor
-    ) external onlyRole(ETF_ADMIN) {
-        _getFacadeStorage().petfRewardDistributor = IPETFRD(petfRewardDistributor);
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _getFacadeStorage().petfRewardDistributor = IPETFRD(
+            petfRewardDistributor
+        );
     }
 
     function setSupportedTokenAddress(
         IERC20 tokenAddress,
         bool isSupported
-    ) external onlyRole(ETF_ADMIN) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         _getFacadeStorage().supportedTokenAddress[tokenAddress] = isSupported;
     }
 
     function setAssetRecipient(
         address assetRecipient
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         _getFacadeStorage().assetRecipient = assetRecipient;
     }
 
     function setServiceFeeRecipient(
         address serviceFeeRecipient
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    ) external onlyRole(CONTRACT_ADMIN) {
         _getFacadeStorage().serviceFeeRecipient = serviceFeeRecipient;
     }
 
-    function pause() external onlyRole(ETF_ADMIN) {
+    function pause() external onlyRole(CONTRACT_ADMIN) {
         _pause();
     }
 
-    function unpause() external onlyRole(ETF_ADMIN) {
+    function unpause() external onlyRole(CONTRACT_ADMIN) {
         _unpause();
     }
 
@@ -257,7 +259,10 @@ contract PETFFacade is
         $.petfToken.mintETF(_msgSender(), sd.actualEtfAmount);
 
         if (sd.actualRefundUSDAmount > 0) {
-            IERC20(sd.usdAddress).safeTransfer(sd.user, sd.actualRefundUSDAmount);
+            IERC20(sd.usdAddress).safeTransfer(
+                sd.user,
+                sd.actualRefundUSDAmount
+            );
         }
 
         $.petfTrading.claim(subscriptionId);
@@ -275,6 +280,7 @@ contract PETFFacade is
     ) external whenNotPaused {
         _checkSupportedTokenAddress(IERC20(usdAddress));
         _notBlacklisted(_msgSender());
+        _checkEtfAmount(actualEtfAmount);
 
         if (deadline < block.timestamp) revert ExpiredOrder();
 
@@ -362,6 +368,7 @@ contract PETFFacade is
     ) external onlyRole(TRADE_ADMIN) {
         _checkSupportedTokenAddress(IERC20(usdAddress));
         _notBlacklisted(user);
+        _checkEtfAmount(actualEtfAmount);
 
         _getFacadeStorage().petfTrading.offChainSubscribe(
             usdAmount,
@@ -439,17 +446,17 @@ contract PETFFacade is
         _getFacadeStorage().petfTrading.settleOffChainRedemption(redemptionId);
     }
 
-    function burnAdmin(uint96 redemptionId) external onlyRole(TRADE_ADMIN) {
-        PETFFacadeStorage storage $ = _getFacadeStorage();
-        IPETFTrading.RedemptionData memory rd = $.petfTrading.getRedemptionData(
-            redemptionId
-        );
+    // function burnAdmin(uint96 redemptionId) external onlyRole(TRADE_ADMIN) {
+    //     PETFFacadeStorage storage $ = _getFacadeStorage();
+    //     IPETFTrading.RedemptionData memory rd = $.petfTrading.getRedemptionData(
+    //         redemptionId
+    //     );
 
-        $.petfTrading.burn(redemptionId);
-        $.petfToken.burnETF(rd.user, rd.actualEtfAmount);
+    //     $.petfTrading.burn(redemptionId);
+    //     $.petfToken.burnETF(rd.user, rd.actualEtfAmount);
 
-        emit TransferWithIdEvent(rd.user, address(0), rd.actualEtfAmount);
-    }
+    //     emit TransferWithIdEvent(rd.user, address(0), rd.actualEtfAmount);
+    // }
 
     /*//////////////////////////////////////////////////////////////
                             VIEW PASSTHROUGH
@@ -475,7 +482,10 @@ contract PETFFacade is
         address signer,
         bool isAdd
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _getFacadeStorage().petfTrading.addOnRemoveAuthorizedSigner(signer, isAdd);
+        _getFacadeStorage().petfTrading.addOnRemoveAuthorizedSigner(
+            signer,
+            isAdd
+        );
     }
 
     function getAuthorizedSigner(address signer) public view returns (bool) {
@@ -485,14 +495,6 @@ contract PETFFacade is
     /*//////////////////////////////////////////////////////////////
                             REWARD DISTRIBUTOR
     //////////////////////////////////////////////////////////////*/
-
-    function rewardPause() external onlyRole(DIVIDEND_ADMIN) {
-        _getFacadeStorage().petfRewardDistributor.pause();
-    }
-
-    function rewardUnpause() external onlyRole(DIVIDEND_ADMIN) {
-        _getFacadeStorage().petfRewardDistributor.unpause();
-    }
 
     function createRewardPhase(
         uint256 id,

@@ -9,15 +9,13 @@ import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeE
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PETFTradingStory} from "./abstracts/storys/PETFTradingStory.sol";
-import {Roles} from "./abstracts/Roles.sol";
 
 contract PETFTrading is
     Initializable,
     AccessControlEnumerableUpgradeable,
     EIP712Upgradeable,
     UUPSUpgradeable,
-    PETFTradingStory,
-    Roles
+    PETFTradingStory
 {
     /// ======= Using =======
     using SafeERC20 for IERC20;
@@ -32,13 +30,11 @@ contract PETFTrading is
         _disableInitializers();
     }
 
-    function initialize(address _permissionedETF) public initializer {
+    function initialize() public initializer {
         __AccessControl_init();
         __EIP712_init("ETFTrading", "1");
 
-        _grantRole(PERMISSIONED_ETF, _permissionedETF);
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        _grantRole(ETF_ADMIN, _msgSender());
     }
 
     // /*//////////////////////////////////////////////////////////////
@@ -56,7 +52,7 @@ contract PETFTrading is
         uint96 deadline,
         address usdAddress,
         bytes calldata signature
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -104,7 +100,7 @@ contract PETFTrading is
         uint128 actualRefundUSDAmount,
         uint80 actualTransactionFee,
         string calldata offChainId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -135,7 +131,7 @@ contract PETFTrading is
 
     function revertOnChainSubscribe(
         uint96 subscriptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -162,7 +158,7 @@ contract PETFTrading is
 
     function settleOnChainSubscribe(
         uint96 subscriptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -183,7 +179,7 @@ contract PETFTrading is
         );
     }
 
-    function claim(uint96 subscriptionId) external onlyRole(PERMISSIONED_ETF) {
+    function claim(uint96 subscriptionId) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -211,7 +207,7 @@ contract PETFTrading is
         uint128 deadline,
         address user,
         bytes calldata signature
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -254,7 +250,7 @@ contract PETFTrading is
         uint128 actualUSDAmount,
         uint96 actualPrice,
         uint80 actualTransactionFee
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         RedemptionData storage rd = $.redemptionDataMap[redemptionId];
@@ -277,7 +273,7 @@ contract PETFTrading is
 
     function revertOnChainRedemption(
         uint96 redemptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         RedemptionData storage rd = $.redemptionDataMap[redemptionId];
@@ -299,7 +295,7 @@ contract PETFTrading is
 
     function settleOnChainRedemption(
         uint96 redemptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -321,7 +317,7 @@ contract PETFTrading is
         );
     }
 
-    function claimUSD(uint96 redemptionId) external onlyRole(PERMISSIONED_ETF) {
+    function claimUSD(uint96 redemptionId) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -353,7 +349,7 @@ contract PETFTrading is
         uint96 actualPrice,
         uint80 actualTransactionFee,
         string calldata offChainId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -388,7 +384,7 @@ contract PETFTrading is
 
     function revertOffChainSubscribe(
         uint96 subscriptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -411,7 +407,7 @@ contract PETFTrading is
 
     function settleOffChainSubscribe(
         uint96 subscriptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         SubscribeData storage sd = $.subscribeDataMap[subscriptionId];
@@ -430,7 +426,7 @@ contract PETFTrading is
 
     function distributeSubscribe(
         uint96 subscriptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         SubscribeData storage sd = $.subscribeDataMap[subscriptionId];
@@ -463,7 +459,7 @@ contract PETFTrading is
         uint96 actualPrice,
         uint80 actualTransactionFee,
         string calldata offChainId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         uint96 redemptionId = ++$.nextId;
@@ -491,7 +487,7 @@ contract PETFTrading is
 
     function revertOffChainRedemption(
         uint96 redemptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
 
@@ -513,7 +509,7 @@ contract PETFTrading is
 
     function settleOffChainRedemption(
         uint96 redemptionId
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         PermissionedETFTradingStorage
             storage $ = _getPermissionedETFTradingStorage();
         RedemptionData storage rd = $.redemptionDataMap[redemptionId];
@@ -534,38 +530,38 @@ contract PETFTrading is
         );
     }
 
-    function burn(uint96 redemptionId) external {
-        if (
-            !hasRole(DEFAULT_ADMIN_ROLE, _msgSender()) &&
-            !hasRole(PERMISSIONED_ETF, _msgSender())
-        )
-            revert AccessControlUnauthorizedAccount(
-                _msgSender(),
-                DEFAULT_ADMIN_ROLE
-            );
+    // function burn(uint96 redemptionId) external {
+    //     if (
+    //         !hasRole(DEFAULT_ADMIN_ROLE, _msgSender()) &&
+    //         !hasRole(PETF_FACADE, _msgSender())
+    //     )
+    //         revert AccessControlUnauthorizedAccount(
+    //             _msgSender(),
+    //             DEFAULT_ADMIN_ROLE
+    //         );
 
-        PermissionedETFTradingStorage
-            storage $ = _getPermissionedETFTradingStorage();
+    //     PermissionedETFTradingStorage
+    //         storage $ = _getPermissionedETFTradingStorage();
 
-        RedemptionData storage rd = $.redemptionDataMap[redemptionId];
+    //     RedemptionData storage rd = $.redemptionDataMap[redemptionId];
 
-       // if (!rd.isSettled) revert RedemptionNotSettled();
-        if (rd.user == address(0)) revert RedemptionDoesNotExist();
+    //     if (!rd.isSettled) revert RedemptionNotSettled();
+    //     if (rd.user == address(0)) revert RedemptionDoesNotExist();
 
-        emit BurnEvent(
-            redemptionId,
-            rd.actualUSDAmount,
-            rd.usdAddress,
-            rd.actualEtfAmount,
-            rd.user,
-            rd.actualPrice
-        );
-        delete $.redemptionDataMap[redemptionId];
-    }
+    //     emit BurnEvent(
+    //         redemptionId,
+    //         rd.actualUSDAmount,
+    //         rd.usdAddress,
+    //         rd.actualEtfAmount,
+    //         rd.user,
+    //         rd.actualPrice
+    //     );
+    //     delete $.redemptionDataMap[redemptionId];
+    // }
 
     function getSubscriptionUser(
         uint96 subscriptionId
-    ) external view onlyRole(PERMISSIONED_ETF) returns (address) {
+    ) external view onlyRole(PETF_FACADE) returns (address) {
         return
             _getPermissionedETFTradingStorage()
                 .subscribeDataMap[subscriptionId]
@@ -574,7 +570,7 @@ contract PETFTrading is
 
     function getRedemptionUser(
         uint96 redemptionId
-    ) external view onlyRole(PERMISSIONED_ETF) returns (address) {
+    ) external view onlyRole(PETF_FACADE) returns (address) {
         return
             _getPermissionedETFTradingStorage()
                 .redemptionDataMap[redemptionId]
@@ -583,7 +579,7 @@ contract PETFTrading is
 
     function getSubscribeData(
         uint96 subscriptionId
-    ) external view onlyRole(PERMISSIONED_ETF) returns (SubscribeData memory) {
+    ) external view onlyRole(PETF_FACADE) returns (SubscribeData memory) {
         SubscribeData memory sd = _getPermissionedETFTradingStorage()
             .subscribeDataMap[subscriptionId];
         if (sd.user == address(0)) revert SubscriptionDoesNotExist();
@@ -592,7 +588,7 @@ contract PETFTrading is
 
     function getRedemptionData(
         uint96 redemptionId
-    ) external view onlyRole(PERMISSIONED_ETF) returns (RedemptionData memory) {
+    ) external view onlyRole(PETF_FACADE) returns (RedemptionData memory) {
         RedemptionData memory rd = _getPermissionedETFTradingStorage()
             .redemptionDataMap[redemptionId];
         if (rd.user == address(0)) revert RedemptionDoesNotExist();
@@ -603,21 +599,6 @@ contract PETFTrading is
                                 get and set
     //////////////////////////////////////////////////////////////*/
 
-    // function getBoardLotSize()
-    //     external
-    //     view
-    //     onlyRole(PERMISSIONED_ETF)
-    //     returns (uint96)
-    // {
-    //     return _getPermissionedETFTradingStorage().boardLotSize;
-    // }
-
-    // function setBoardLotSize(
-    //     uint96 newLotSize
-    // ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-    //     _getPermissionedETFTradingStorage().boardLotSize = newLotSize;
-    // }
-
     function nonceOf(address user) external view returns (uint256) {
         return _getPermissionedETFTradingStorage().nonces[user];
     }
@@ -625,7 +606,7 @@ contract PETFTrading is
     function addOnRemoveAuthorizedSigner(
         address signer,
         bool isAdd
-    ) external onlyRole(PERMISSIONED_ETF) {
+    ) external onlyRole(PETF_FACADE) {
         _getPermissionedETFTradingStorage().isAuthorizedSigner[signer] = isAdd;
 
         if (isAdd) emit AuthorizedSignerAdded(signer);
@@ -634,15 +615,11 @@ contract PETFTrading is
 
     function getAuthorizedSigner(
         address signer
-    ) external view onlyRole(PERMISSIONED_ETF) returns (bool) {
+    ) external view onlyRole(PETF_FACADE) returns (bool) {
         return _getPermissionedETFTradingStorage().isAuthorizedSigner[signer];
     }
 
     function _authorizeUpgrade(
         address newImplementation
-    ) internal override onlyRole(PERMISSIONED_ETF) {}
-
-    function getPETFToken() external view returns (address) {
-        return getRoleMember(PERMISSIONED_ETF, 0);
-    }
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }

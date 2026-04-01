@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {IPETFTrading} from "../../interfaces/IPETFTrading.sol";
 import {IPETFRD} from "../../interfaces/IPETFRD.sol";
-import {IPermissionedETF} from "../../interfaces/PETFToken.sol";
+import {IPermissionedETF} from "../../interfaces/IPETFToken.sol";
 
 abstract contract PETFFacadeStory {
     /// ======= Error =======

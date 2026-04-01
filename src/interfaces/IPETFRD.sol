@@ -58,16 +58,6 @@ interface IPETFRD {
     event MerkleRootUpdated(uint256 indexed period, bytes32 merkleRoot);
 
     /*//////////////////////////////////////////////////////////////
-                            Pause / Unpause
-    //////////////////////////////////////////////////////////////*/
-
-    function pause() external;
-
-    function unpause() external;
-
-    function getRewardPauseStatus() external view returns (bool);
-
-    /*//////////////////////////////////////////////////////////////
                                 Views
     //////////////////////////////////////////////////////////////*/
 

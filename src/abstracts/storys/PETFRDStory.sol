@@ -64,7 +64,7 @@ abstract contract PETFRDStory {
 
     /// ======= Constants =======
 
-    bytes32 public constant PERMISSIONED_ETF = keccak256("PERMISSIONED_ETF");
+    bytes32 public constant PETF_FACADE = keccak256("PETF_FACADE");
 
     // keccak256(abi.encode(uint256(keccak256("PETFRD.storage.PETFRD")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant PETFRDStorageLocation =

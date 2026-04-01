@@ -13,9 +13,9 @@ import {PETFFacade} from "../src/PETFFacade.sol";
 contract DeployPETFToken is Script {
     uint256 private PRIVATE_KEY;
 
-    // Role constants (mirror Roles.sol)
-    bytes32 constant ETF_ADMIN    = keccak256("ETF_ADMIN");
-    bytes32 constant PERMISSIONED_ETF = keccak256("PERMISSIONED_ETF");
+    // Role constants (mirror Roles.sol / PETFTradingStory / PETFRDStory)
+    bytes32 constant TRADE_ADMIN = keccak256("TRADE_ADMIN");
+    bytes32 constant PETF_FACADE = keccak256("PETF_FACADE");
 
     function run() external {
         PRIVATE_KEY = vm.envUint("PRIVATE_KEY");
@@ -33,21 +33,17 @@ contract DeployPETFToken is Script {
         );
         console2.log("PETFToken deployed at:", petfTokenProxy);
 
-        // 2. Deploy PETFTrading proxy (grants PERMISSIONED_ETF to petfTokenProxy for now;
-        //    we will also grant it to PETFFacade below)
+        // 2. Deploy PETFTrading proxy (no constructor args)
         address petfTradingProxy = Upgrades.deployUUPSProxy(
             "PETFTrading.sol:PETFTrading",
-            abi.encodeCall(PETFTrading.initialize, (petfTokenProxy))
+            abi.encodeCall(PETFTrading.initialize, ())
         );
         console2.log("PETFTrading deployed at:", petfTradingProxy);
 
-        // 3. Deploy PETFRewardDistributor proxy
+        // 3. Deploy PETFRewardDistributor proxy (no constructor args)
         address petfRDProxy = Upgrades.deployUUPSProxy(
             "PETFRewardDistributor.sol:PETFRewardDistributor",
-            abi.encodeCall(
-                PETFRewardDistributor.initialize,
-                (petfTokenProxy)
-            )
+            abi.encodeCall(PETFRewardDistributor.initialize, ())
         );
         console2.log("PETFRewardDistributor deployed at:", petfRDProxy);
 
@@ -69,22 +65,16 @@ contract DeployPETFToken is Script {
         );
         console2.log("PETFFacade deployed at:", petfFacadeProxy);
 
-        // 5. Grant ETF_ADMIN on PETFToken to PETFFacade
+        // 5. Grant TRADE_ADMIN on PETFToken to PETFFacade
         //    so the Facade can call mintETF / burnETF.
-        IAccessControl(petfTokenProxy).grantRole(ETF_ADMIN, petfFacadeProxy);
+        IAccessControl(petfTokenProxy).grantRole(TRADE_ADMIN, petfFacadeProxy);
 
-        // 6. Grant PERMISSIONED_ETF on PETFTrading to PETFFacade
+        // 6. Grant PETF_FACADE on PETFTrading to PETFFacade
         //    so the Facade can call all trading functions.
-        IAccessControl(petfTradingProxy).grantRole(PERMISSIONED_ETF, petfFacadeProxy);
+        IAccessControl(petfTradingProxy).grantRole(PETF_FACADE, petfFacadeProxy);
 
-        // 7. Grant PERMISSIONED_ETF on PETFRewardDistributor to PETFFacade
-        IAccessControl(petfRDProxy).grantRole(PERMISSIONED_ETF, petfFacadeProxy);
-
-        // 8. Revoke PERMISSIONED_ETF from PETFToken on PETFTrading and PETFRewardDistributor.
-        //    PETFToken was granted this role during initialization but only PETFFacade
-        //    should be able to call trading / reward-distributor functions.
-        IAccessControl(petfTradingProxy).revokeRole(PERMISSIONED_ETF, petfTokenProxy);
-        IAccessControl(petfRDProxy).revokeRole(PERMISSIONED_ETF, petfTokenProxy);
+        // 7. Grant PETF_FACADE on PETFRewardDistributor to PETFFacade
+        IAccessControl(petfRDProxy).grantRole(PETF_FACADE, petfFacadeProxy);
 
         vm.stopBroadcast();
     }
