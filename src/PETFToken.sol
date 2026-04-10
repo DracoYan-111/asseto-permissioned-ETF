@@ -96,7 +96,7 @@ contract PETFToken is
         address from,
         address to,
         uint256 amount
-    ) public onlyRole(FIX_ADMIN) {
+    ) public onlyRole(FORCE_ACTION_ADMIN) {
         if (to != address(0)) _snapshotAccount(to, balanceOf(to));
         if (from != address(0)) _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
@@ -110,14 +110,17 @@ contract PETFToken is
     }
 
     /**
-     * @dev Mints ETF tokens to `to`. Callable only by PETFFacade (TRADE_ADMIN role).
-     *      Bypasses the transfer-policy check — the facade is responsible for
-     *      performing authorization before calling this.
+     * @dev Mints ETF tokens to `to`. Callable only by TRADE_ADMIN or FORCE_ACTION_ADMIN.
+     *      Enforces the permissioned transfer policy: `to` must be whitelisted (ALLOWED).
+     *      Callers (e.g. PETFFacade) are responsible for ensuring `to` is not blacklisted
+     *      before invoking this function.
      */
-    function mintETF(
-        address to,
-        uint256 amount
-    ) external onlyRole(TRADE_ADMIN) {
+    function mintETF(address to, uint256 amount) external {
+        if (
+            !hasRole(TRADE_ADMIN, _msgSender()) &&
+            !hasRole(FORCE_ACTION_ADMIN, _msgSender())
+        ) revert AccessControlUnauthorizedAccount(_msgSender(), TRADE_ADMIN);
+
         _update(address(0), to, amount);
     }
 
@@ -125,10 +128,11 @@ contract PETFToken is
      * @dev Burns ETF tokens from `from`. Callable only by PETFFacade (TRADE_ADMIN role).
      *      Takes a pre-burn snapshot before executing the burn.
      */
-    function burnETF(
-        address from,
-        uint256 amount
-    ) external onlyRole(TRADE_ADMIN) {
+    function burnETF(address from, uint256 amount) external {
+        if (
+            !hasRole(TRADE_ADMIN, _msgSender()) &&
+            !hasRole(FORCE_ACTION_ADMIN, _msgSender())
+        ) revert AccessControlUnauthorizedAccount(_msgSender(), TRADE_ADMIN);
         _snapshotAccount(from, balanceOf(from));
         _snapshotTotalSupply(totalSupply());
         ERC20Upgradeable._update(from, address(0), amount);
