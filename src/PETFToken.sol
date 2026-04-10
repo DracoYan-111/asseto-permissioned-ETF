@@ -171,8 +171,13 @@ contract PETFToken is
         super._update(from, to, value);
     }
 
-    function decimals() public view override returns (uint8) {
-        return 6;
+    function _approve(
+        address owner,
+        address spender,
+        uint256 value,
+        bool emitEvent
+    ) internal override(ERC20PausableUpgradeable) {
+        revert ERC20InvalidSpender(spender);
     }
 
     /**
